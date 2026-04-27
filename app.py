@@ -1,6 +1,6 @@
 import streamlit as st
 import matplotlib.pyplot as plt
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import geocoder
 import os
 from weather_api import get_current_weather, get_forecast, get_weather_by_coords, get_forecast_by_coords
@@ -12,17 +12,64 @@ st.set_page_config(page_title="Modern Weather App", page_icon="🌤️", layout=
 # Custom CSS for modern UI
 st.markdown("""
 <style>
+    /* Animated Dynamic Background */
+    .stApp {
+        background: linear-gradient(-45deg, #0b1120, #1e3a5f, #3362a2, #0b1120);
+        background-size: 400% 400%;
+        animation: gradientBG 15s ease infinite;
+    }
+
+    @keyframes gradientBG {
+        0% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
+    }
+
+    /* Layout adjustments */
     .reportview-container .main .block-container{
         padding-top: 2rem;
     }
-    .metric-card {
-        background-color: rgba(255, 255, 255, 0.05);
-        border-radius: 10px;
-        padding: 15px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        text-align: center;
-        margin-bottom: 20px;
-        border: 1px solid rgba(200, 200, 200, 0.2);
+
+    /* Glassmorphism for Metric Cards & General Containers */
+    [data-testid="stMetric"], .metric-card {
+        background-color: rgba(255, 255, 255, 0.05) !important;
+        backdrop-filter: blur(15px) !important;
+        -webkit-backdrop-filter: blur(15px) !important;
+        border-radius: 12px !important;
+        padding: 15px !important;
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2) !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
+    }
+
+    /* Interactive Hover Gestures for Cards */
+    [data-testid="stMetric"]:hover, .metric-card:hover {
+        transform: translateY(-6px) scale(1.02) !important;
+        box-shadow: 0 15px 40px 0 rgba(0, 0, 0, 0.4) !important;
+        background-color: rgba(255, 255, 255, 0.1) !important;
+        border: 1px solid rgba(255, 255, 255, 0.25) !important;
+    }
+
+    /* Sidebar Frost Effect */
+    [data-testid="stSidebar"] {
+        background: rgba(15, 23, 42, 0.75) !important;
+        backdrop-filter: blur(20px) !important;
+        border-right: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    /* Interactive Buttons */
+    .stButton>button {
+        background: linear-gradient(90deg, #3b82f6, #6366f1) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 20px !important;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2) !important;
+        transition: all 0.3s ease !important;
+    }
+    .stButton>button:hover {
+        transform: translateY(-3px) scale(1.03) !important;
+        box-shadow: 0 8px 25px rgba(0, 0, 0, 0.4) !important;
+        filter: brightness(1.15) !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -34,6 +81,8 @@ if "weather_data" not in st.session_state:
     st.session_state.weather_data = None
 if "forecast_data" not in st.session_state:
     st.session_state.forecast_data = None
+if "current_search" not in st.session_state:
+    st.session_state.current_search = {"type": None, "query": None, "unit": None, "lang": None}
 
 def add_to_recent(city):
     if city and city not in st.session_state.recent_searches:
@@ -46,17 +95,23 @@ def fetch_weather(city=None, lat=None, lon=None, unit='metric', lang='en'):
         if city:
             current = get_current_weather(city, lang=lang, unit=unit)
             forecast = get_forecast(city, lang=lang, unit=unit)
+            search_type = 'city'
+            query = city
         elif lat and lon:
             current = get_weather_by_coords(lat, lon, lang=lang, unit=unit)
             forecast = get_forecast_by_coords(lat, lon, lang=lang, unit=unit)
+            search_type = 'coords'
+            query = (lat, lon)
         else:
             return
 
         if current and current.get("cod") == 200:
             st.session_state.weather_data = current
             st.session_state.forecast_data = forecast
+            st.session_state.current_search = {"type": search_type, "query": query, "unit": unit, "lang": lang}
             if city:
                 add_to_recent(city)
+            st.toast(f"Successfully loaded weather for {current.get('name')}!", icon="✨")
         else:
             st.error("Error fetching data. Please check the city name or API Key.")
 
@@ -70,6 +125,16 @@ unit_param = "metric" if unit_selection == "Celsius" else "imperial"
 
 lang_selection = col2.selectbox("Language", ["English (en)", "Spanish (es)", "French (fr)", "German (de)", "Hindi (hi)"])
 lang_param = lang_selection.split("(")[1].replace(")", "")
+
+# Auto-refresh if language or unit changed
+if st.session_state.current_search["type"]:
+    last_search = st.session_state.current_search
+    if last_search["unit"] != unit_param or last_search["lang"] != lang_param:
+        if last_search["type"] == 'city':
+            fetch_weather(city=last_search["query"], unit=unit_param, lang=lang_param)
+        elif last_search["type"] == 'coords':
+            lat, lon = last_search["query"]
+            fetch_weather(lat=lat, lon=lon, unit=unit_param, lang=lang_param)
 
 # Search Input
 city_input = st.sidebar.text_input("Enter City Name:", placeholder="e.g. London, New York")
@@ -134,9 +199,12 @@ if st.session_state.weather_data:
     m3.metric("⏱️ Pressure", f"{current['main']['pressure']} hPa")
     m4.metric("👁️ Visibility", f"{current.get('visibility', 0) / 1000} km")
 
-    # Sunrise / Sunset
-    sunrise_time = datetime.fromtimestamp(current['sys']['sunrise']).strftime('%I:%M %p')
-    sunset_time = datetime.fromtimestamp(current['sys']['sunset']).strftime('%I:%M %p')
+    # Sunrise / Sunset (adjusted for city time zone)
+    tz_offset = current.get('timezone', 0)
+    sunrise_dt = datetime.fromtimestamp(current['sys']['sunrise'], timezone.utc) + timedelta(seconds=tz_offset)
+    sunset_dt = datetime.fromtimestamp(current['sys']['sunset'], timezone.utc) + timedelta(seconds=tz_offset)
+    sunrise_time = sunrise_dt.strftime('%I:%M %p')
+    sunset_time = sunset_dt.strftime('%I:%M %p')
     
     st.markdown("<br>", unsafe_allow_html=True)
     c1, c2 = st.columns(2)
@@ -153,9 +221,10 @@ if st.session_state.weather_data:
         timestamps = []
         temps = []
         
+        tz_offset = current.get('timezone', 0)
         for item in forecast['list'][:10]: # Next 30 hours approx
-            dt = datetime.fromtimestamp(item['dt'])
-            timestamps.append(dt.strftime('%H:%M'))
+            dt = datetime.fromtimestamp(item['dt'], timezone.utc) + timedelta(seconds=tz_offset)
+            timestamps.append(dt.strftime('%d %b\n%H:%M'))
             temps.append(item['main']['temp'])
 
         with tab1:
@@ -190,7 +259,7 @@ if st.session_state.weather_data:
             for idx, item in enumerate(daily_forecast):
                 col = forecast_cols[idx % 5]
                 with col:
-                    dt = datetime.fromtimestamp(item['dt'])
+                    dt = datetime.fromtimestamp(item['dt'], timezone.utc) + timedelta(seconds=tz_offset)
                     f_temp = item['main']['temp']
                     f_desc = item['weather'][0]['description'].title()
                     f_icon = item['weather'][0]['icon']
