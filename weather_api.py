@@ -4,7 +4,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-API_KEY = os.getenv("OPENWEATHER_API_KEY")
+# Support both Streamlit secrets (cloud) and .env (local)
+try:
+    import streamlit as st
+    API_KEY = st.secrets.get("OPENWEATHER_API_KEY", os.getenv("OPENWEATHER_API_KEY"))
+except Exception:
+    API_KEY = os.getenv("OPENWEATHER_API_KEY")
 BASE_URL = "https://api.openweathermap.org/data/2.5"
 
 def get_current_weather(city, lang='en', unit='metric'):
